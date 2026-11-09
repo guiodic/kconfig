@@ -45,7 +45,7 @@ target_link_libraries(KF6ConfigQml
     Qt6::Quick
 )
 
-if(Qt6Core_VERSION VERSION_GREATER_EQUAL "6.12.0")
+if(Qt6Core_VERSION VERSION_GREATER_EQUAL "6.12.0" AND QT_FEATURE_wayland)
     find_package(Qt6GuiPrivate ${REQUIRED_QT_VERSION} REQUIRED)
     target_link_libraries(KF6ConfigQml PRIVATE Qt6::GuiPrivate)
 endif()

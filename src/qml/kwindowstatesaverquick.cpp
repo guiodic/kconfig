@@ -9,6 +9,7 @@
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 12, 0) && QT_CONFIG(wayland)
 #include <QGuiApplication>
+#include <QPlatformSurfaceEvent>
 #include <qpa/qplatformwindow_p.h>
 #endif
 
@@ -17,30 +18,58 @@
 #if QT_VERSION >= QT_VERSION_CHECK(6, 12, 0) && QT_CONFIG(wayland)
 namespace
 {
-void setNativeSessionRestoreId(QWindow *window, const QString &restoreId)
-{
-    if (QGuiApplication::platformName() != QLatin1String("wayland") || QCoreApplication::testAttribute(Qt::AA_DisableSessionManager)
-        || window->isVisible() || restoreId.isEmpty()) {
-        return;
-    }
+constexpr auto restoreIdProperty = "_k_kconfig_sessionRestoreId";
 
-    constexpr auto restoreIdProperty = "_k_kconfig_sessionRestoreId";
-    const auto windows = QGuiApplication::topLevelWindows();
-    for (const auto *other : windows) {
-        if (other != window && other->property(restoreIdProperty).toString() == restoreId) {
-            qCWarning(KCONFIG_QML_LOG) << "WindowStateSaver requires distinct configGroupName values for native session restoration:" << restoreId;
-            return;
+class NativeSessionRestoreId : public QObject
+{
+public:
+    NativeSessionRestoreId(QWindow *window, const QString &restoreId)
+        : QObject(window)
+        , m_window(window)
+        , m_restoreId(restoreId)
+    {
+        window->installEventFilter(this);
+        if (window->handle() && !window->isVisible()) {
+            apply();
         }
     }
 
-    // Qt needs a stable per-window name before creating the xdg_toplevel.
-    // The config group identifies this window across application launches.
-    window->create();
-    if (auto *native = window->nativeInterface<QNativeInterface::Private::QWaylandWindow>()) {
-        native->setSessionRestoreId(restoreId);
-        window->setProperty(restoreIdProperty, restoreId);
+protected:
+    bool eventFilter(QObject *, QEvent *event) override
+    {
+        if (event->type() == QEvent::PlatformSurface) {
+            const auto *surfaceEvent = static_cast<QPlatformSurfaceEvent *>(event);
+            if (surfaceEvent->surfaceEventType() == QPlatformSurfaceEvent::SurfaceCreated) {
+                apply();
+            } else if (m_window->property(restoreIdProperty).toString() == m_restoreId) {
+                m_window->setProperty(restoreIdProperty, QVariant());
+            }
+        }
+        return false;
     }
-}
+
+private:
+    void apply()
+    {
+        const auto windows = QGuiApplication::topLevelWindows();
+        for (const auto *other : windows) {
+            if (other != m_window && other->handle() && other->property(restoreIdProperty).toString() == m_restoreId) {
+                qCWarning(KCONFIG_QML_LOG) << "WindowStateSaver requires distinct configGroupName values for native session restoration:" << m_restoreId;
+                return;
+            }
+        }
+
+        // SurfaceCreated precedes the xdg_toplevel, without forcing native
+        // creation before the application has finished configuring its window.
+        if (auto *native = m_window->nativeInterface<QNativeInterface::Private::QWaylandWindow>()) {
+            native->setSessionRestoreId(m_restoreId);
+            m_window->setProperty(restoreIdProperty, m_restoreId);
+        }
+    }
+
+    QWindow *const m_window;
+    const QString m_restoreId;
+};
 }
 #endif
 
@@ -63,7 +92,10 @@ void KWindowStateSaverQuick::componentComplete()
     }
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 12, 0) && QT_CONFIG(wayland)
-    setNativeSessionRestoreId(window, m_configGroupName);
+    if (QGuiApplication::platformName() == QLatin1String("wayland") && !QCoreApplication::testAttribute(Qt::AA_DisableSessionManager)
+        && !m_configGroupName.isEmpty()) {
+        new NativeSessionRestoreId(window, m_configGroupName);
+    }
 #endif
 
     new KWindowStateSaver(window, m_configGroupName);
