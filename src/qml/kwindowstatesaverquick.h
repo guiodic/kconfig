@@ -43,6 +43,13 @@ class KWindowStateSaverQuick : public QObject, public QQmlParserStatus
 
     /*!
      * \qmlproperty string WindowStateSaver::configGroupName
+     *
+     * On Wayland with Qt 6.12 or later, this is also used as the window's native
+     * session restore ID. Use a stable group name unique to each window in the
+     * application, and create the state saver before showing the window. The ID
+     * is assigned when the native surface is created, including after recreation.
+     * If multiple native windows use the same group name, only the first receives
+     * a restore ID; the others retain the regular geometry persistence.
      */
     Q_PROPERTY(QString configGroupName READ configGroupName WRITE setConfigGroupName NOTIFY configGroupNameChanged REQUIRED)
 
